@@ -7,6 +7,8 @@ max_word_length = 8
 
 good_length = lambda w: len(w) >= min_word_length and len(w) <= max_word_length
 
+# Download corpus with POS tagged word stats here: https://svn.spraakdata.gu.se/sb-arkiv/pub/frekvens/stats_PAROLE.txt
+
 """
 CODE | SWEDISH CATEGORY 	| EXAMPLE 	| ENGLISH TRANSLATION 
 AB 	 | Adverb 				| 'inte' 	| Adverb
@@ -51,8 +53,6 @@ pos_whitelist = set([
 	'CD'	# Cardinal number
 ])
 
-has_good_any_pos = lambda pos_list: any(set(pos_list).intersection(pos_whitelist))
-
 class WordCandidate(object):
 	def __init__(self, number_of_occurences_in_corpus, initial_pos, word_maybe_not_base_form, word_on_base_form):
 		if word_on_base_form is None:
@@ -63,8 +63,8 @@ class WordCandidate(object):
 
 		self.word_on_base_form = word_on_base_form
 
-		self.pos_tags = [initial_pos]
-		self.different_forms = [word_maybe_not_base_form]
+		self.pos_tags = set([initial_pos])
+		self.different_forms = set([word_maybe_not_base_form])
 
 		# For NON names (POS tag: 'PM') we will add the number of 
 		# occurences of a uppercase word 'Jägare' and 'jägare' and their
@@ -84,25 +84,13 @@ class WordCandidate(object):
 	def __hash__(self):
 		return self.word_on_base_form
 
+	def update(self, base_form, word, pos, occurences):
+		if not base_form == self.word_on_base_form:
+			raise ValueError("Not same base form of word, got '{}', but expected: '{}'".format(base_form, self.word_on_base_form))
 
-	def update_with_pos_of_word(self, number_of_occurences_in_corpus, pos_tag, word, word_base_form):
-		if not word_base_form == self.word_on_base_form:
-			raise ValueError("Not same base form of word, got '{}', but expected: '{}'".format(word_base_form, self.word_on_base_form))
-
-		# if word.lower() in self.different_forms:
-		# 	return False
-
-		# name 'Björn', should not lowercase it, 
-		# because it becomes 'björn'
-		# (which equals the noun 'bear' in Swedish)?
-		# Or actually we dont case?
-		if pos_tag == 'PM':
-			print("🙋🏻‍♀️ name of person found: '{}', lowercasing it anyway".format(word))
-
-		self.pos_tags.append(pos_tag)
-		self.different_forms.append(word.lower())
-		self.sum_of_occurences_of_base_word += number_of_occurences_in_corpus
-		return True
+		self.pos_tags.add(pos)
+		self.different_forms.add(word.lower())
+		self.sum_of_occurences_of_base_word += occurences
 
 	def contains_any_word_of_suitable_length(self):
 		for w in self.different_forms:
@@ -111,7 +99,8 @@ class WordCandidate(object):
 		return False
 
 	def contains_any_whitelisted_pos(self):
-		return has_good_any_pos(self.pos_tags)
+		intersected_pos_tags = self.pos_tags.intersection(pos_whitelist)
+		return len(intersected_pos_tags) > 0
 
 	def __str__(self):
 		return "CANDIDATE<w={}, #pos_tags={}, #words={}>".format(self.word_on_base_form, len(self.pos_tags), len(self.different_forms))
@@ -121,7 +110,6 @@ class WordCandidate(object):
 
 	def good_candiate(self):
 		is_good_candidate = self.contains_any_word_of_suitable_length() and self.contains_any_whitelisted_pos()
-		# print("⁉️ am I: '{}', a good candidate: '{}'".format(self, is_good_candidate))
 		return is_good_candidate
 
 class Words(object):
@@ -138,33 +126,28 @@ class Words(object):
 
 		self.number_of_lines_parsed = 0
 
-	def parse(self, line_in_corpus):
+	def add_or_update_candidate(self, base_form, word, pos, occurences):
+		if base_form in self.candidates:
+			self.candidates[base_form].update(base_form=base_form, word=word, pos=pos, occurences=occurences)
+		else:
+			no_of_good_candidates_before = self.number_of_viable_candidates()
+			self.candidates[base_form] = WordCandidate(occurences, pos, word, base_form)
 
-		self.number_of_lines_parsed += 1
+			no_of_good_candidates_after = self.number_of_viable_candidates()
+			if no_of_good_candidates_after > 0 and no_of_good_candidates_after != no_of_good_candidates_before and no_of_good_candidates_after % 100 == 0:
+				print("🎉 Number of viable word candidates: #{}".format(no_of_good_candidates_after))
 
+	def tuple_from_line(self, line_in_corpus):
 		regexp_for_tab = re.compile("[^\t]+")
 
 		tab_separated_substrings = regexp_for_tab.findall(line_in_corpus)
 		word = tab_separated_substrings[0]
 
-		if not word.isalpha():
-			return None
-
 		pos_of_word_with_specification = tab_separated_substrings[1]
 
-		# line @12 in file "stats_PAROLE.txt": 'det	PN.NEU.SIN.DEF.SUB+OBJ	|den..pn.1|	-	226213	9307.991048'
-		# line @24 in file "stats_PAROLE.txt": 'Det	PN.NEU.SIN.DEF.SUB+OBJ	|den..pn.1|	-	110744	4556.785687'
-		number_of_occurences_in_corpus_case_sensitive = tab_separated_substrings[2]
+		number_of_occurences_in_corpus = int(tab_separated_substrings[4])
 
 		pos_of_word_parts = pos_of_word_with_specification.split(".")
-
-		def crash_and_burn(error_message):
-			print("pos_of_word_with_specification: '{}'\ntab_separated_substrings: '{}'\n".format(pos_of_word_with_specification, tab_separated_substrings))
-			error_message_formatted = "💣 Error: '{}'".format(error_message)
-			raise ValueError(error_message_formatted)
-
-		if len(pos_of_word_parts) < 1:
-			crash_and_burn("len(pos_of_word_parts) < 1")
 
 		pos_of_word = pos_of_word_parts[0]
 	
@@ -175,29 +158,25 @@ class Words(object):
 		base_form = None
 
 		if not base_form_with_suffix:
-			# print("💡 Word: '{}' of POS: '{}' has no base form, setting 'base form' := word".format(word, pos_of_word))
 			base_form = word
 		else:
-			base_form_parts = base_form_with_suffix.split("..") # ['vara', 'vb.2']
-			if len(base_form_parts) < 2:
-				print("🤷‍♂️ base_form_with_suffix: '{}'".format(base_form_with_suffix))
-				crash_and_burn("len(base_form_parts) < 2")
-		
+			base_form_parts = base_form_with_suffix.split("..")
 			base_form = base_form_parts[0]
-		
-		if len(base_form) == 0:
-			crash_and_burn("len(base_form) == 0")
-		
-		if base_form in self.candidates:
-			self.candidates[base_form].update_with_pos_of_word(number_of_occurences_in_corpus_case_sensitive, pos_of_word, word, base_form)
-		else:
-			self.candidates[base_form] = WordCandidate(number_of_occurences_in_corpus_case_sensitive, pos_of_word, word, base_form)
 
-			no_of_good_candidates = self.number_of_viable_candidates()
-			if no_of_good_candidates > 0 and no_of_good_candidates % 10 == 0:
-				print("🎉 Number of viable word candidates: #{}".format(no_of_good_candidates))
+		return (base_form, word, pos_of_word, number_of_occurences_in_corpus)
 
-		return self.candidates[base_form]
+	def parse(self, line_in_corpus):
+
+		self.number_of_lines_parsed += 1
+
+		(base_form, word, pos, occurences) = self.tuple_from_line(line_in_corpus)
+
+		if not word.isalpha():
+			return
+
+		self.add_or_update_candidate(base_form=base_form, word=word, pos=pos, occurences=occurences)
+
+		
 
 	def viable_candidates(self):
 		return list(filter(lambda w: w.good_candiate(), self.candidates.values()))
@@ -207,7 +186,7 @@ class Words(object):
 
 	def done(self):
 		count = self.number_of_viable_candidates()
-		return count > self.target_word_count 
+		return count >= self.target_word_count 
 
 
 class POSInfo(object):
@@ -231,12 +210,13 @@ def analyze_pos_distribution_of(candidates_sorted_by_frequency):
 			else:
 				count_pos[pos_tag] = POSInfo(pos_tag, base_form)
 
+	print("\n📊 Stats of distribution of part of speech tags")
 	for posInfo in sorted(count_pos.values(), key=lambda e: e.count, reverse=True):
 		print("{}\t{}".format(posInfo.pos, posInfo.count))
 
 
 
-def parse(result):
+def parse_result(result):
 	if result is None or not isinstance(result, Words):
 		raise ValueError("Bad result")
 
@@ -245,18 +225,8 @@ def parse(result):
 
 	viable_candidates = result.viable_candidates()
 	print("✅ Finished parsing, found #{} candidate words".format(len(viable_candidates)))
-	
-	first = viable_candidates[0]
-
-	if isinstance(first, WordCandidate):
-		print("1️⃣ candidate: '{}', sum_of_occurences_of_base_word: #{}".format(first, first.sum_of_occurences_of_base_word))
-	else:
-		error_message = "Expected type: 'WordCandidate', but got type: '{}'".format(type(first))
-		raise ValueError(error_message)
 
 	candidates_sorted_by_frequency = sorted(viable_candidates, key=lambda c: c.sum_of_occurences_of_base_word, reverse=True)
-
-	print("🤷‍♂️ #candidates_sorted_by_frequency: '{}'".format(len(candidates_sorted_by_frequency)))
 
 	analyze_pos_distribution_of(candidates_sorted_by_frequency)
 	
@@ -267,13 +237,13 @@ def parse(result):
 	with open(output_file_name, "w") as text_file:
 		print(f"{output_string}", file=text_file)
 
-	print("🇸🇪 Outputted #{} words to file '{}'".format(len(output_elements), output_file_name))
+	print("\n🇸🇪 Outputted #{} words to file '{}'".format(len(output_elements), output_file_name))
 
 
 def created_pos_tagged_doc_parole():
 	file_name = 'stats_PAROLE.txt'
 
-	words = Words(target_word_count=50)
+	words = Words(target_word_count=2500)
 
 	with open(file_name, 'r') as filehandle:
 		for current_place in filehandle.readlines():
@@ -284,6 +254,6 @@ def created_pos_tagged_doc_parole():
 			if words.done():
 				break
 
-	parse(result=words)
+	parse_result(words)
 	
 created_pos_tagged_doc_parole()
