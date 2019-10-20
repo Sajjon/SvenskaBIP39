@@ -106,7 +106,7 @@ class WordCandidate(object):
 		return "CANDIDATE<w={}, #pos_tags={}, #words={}>".format(self.word_on_base_form, len(self.pos_tags), len(self.different_forms))
 
 	def as_result(self):
-		return "{}\tPOS: {}\twords: {}".format(self.word_on_base_form, self.pos_tags, self.different_forms)
+		return "{}\t{}\t{}".format(self.word_on_base_form, self.pos_tags, self.different_forms)
 
 	def good_candiate(self):
 		is_good_candidate = self.contains_any_word_of_suitable_length() and self.contains_any_whitelisted_pos()
@@ -224,7 +224,6 @@ def parse_result(result):
 		raise ValueError("Not enough canidates")
 
 	viable_candidates = result.viable_candidates()
-	print("✅ Finished parsing, found #{} candidate words".format(len(viable_candidates)))
 
 	candidates_sorted_by_frequency = sorted(viable_candidates, key=lambda c: c.sum_of_occurences_of_base_word, reverse=True)
 
@@ -233,17 +232,106 @@ def parse_result(result):
 	output_elements = list(map(lambda wc: wc.as_result(), candidates_sorted_by_frequency))
 	output_string = "\n".join(output_elements)
 
-	output_file_name = 'output_swedish.txt'
+	output_file_name = 'candidates_swedish.txt'
+	with open(output_file_name, "w") as text_file:
+		print(f"{output_string}", file=text_file)
+
+	print("\n✅ Outputted #{} candidates to file '{}'".format(len(output_elements), output_file_name))
+	return candidates_sorted_by_frequency
+
+
+def user_prompt(question: str) -> bool:
+	""" Prompt the yes/no-*question* to the user. """
+	from distutils.util import strtobool
+
+	while True:
+		user_input = input(question + " [y/n]: ").lower()
+		try:
+			result = strtobool(user_input)
+			return result
+		except ValueError:
+			print("Please use y/n or yes/no.\n")
+
+def ask_for_number(question, in_range):
+	answer = None
+	while answer not in in_range:
+		raw_answer = input(question)
+		answer = int(raw_answer)
+		if isinstance(answer, int):
+			return answer
+		else:
+			print("Please enter an int in range: {}".format(in_range))
+
+def ask_for_human_input_for_final_list(target_word_count, candidates):
+	if candidates is None or not isinstance(candidates, list):
+		raise ValueError("Bad value of 'canidates'")
+
+	if not isinstance(candidates[0], WordCandidate):
+		error_message = "candidates list does not contain elements of type 'WordCandidate', value: '{}', has type: '{}'".format(candidates[0], type(candidates[0]))
+		raise ValueError(error_message)
+
+	if len(candidates) <= target_word_count:
+		raise ValueError("List too short")
+
+	# should be lowercase, correct length and disambgious
+	output_elements = set([])
+
+	for candidate in candidates:
+
+		# question = "Include this word? {}".format(candidate.as_result())
+		# if user_prompt(question):
+
+		words_of_good_length_any_case = list(filter(lambda w: good_length(w), candidate.different_forms))
+		words_of_good_length = list(map(lambda w: w.lower(), words_of_good_length_any_case))
+
+		good_potential_words = []
+		# list(filte(lambda w: , words_of_good_length))
+		for word in words_of_good_length:
+			if len(word) >= 4:
+				prefix_of_word = word[:-4]
+				if not prefix_of_word in list(map(lambda w: w[:-4], output_elements)):
+					good_potential_words.append(word)
+			else:
+				if not word in output_elements:
+					good_potential_words.append(word)
+
+		if not good_potential_words:
+			continue
+
+		if len(good_potential_words) > 1:
+			question = "\nInclude any of these words? {}\t<POS: {}>".format(good_potential_words, candidate.pos_tags)
+			if user_prompt(question):
+				word_indices = list(range(len(good_potential_words)))
+				alternatives_dictionary = ["{} = '{}'".format(i, w) for i,w in enumerate(good_potential_words)]
+				alternatives_string = "\n".join(alternatives_dictionary)
+				question_alternatives = "Which one?\n{}\n".format(alternatives_string)
+				chosen_word_index = ask_for_number(question_alternatives, word_indices)
+				word = good_potential_words[chosen_word_index]
+				output_elements.add(word)
+
+		else:
+			word = good_potential_words[0]
+			question = "\nInclude this word? '{}'\t<POS: {}>".format(word, candidate.pos_tags)
+			if user_prompt(question):
+				output_elements.add(word)
+
+
+		if len(output_elements) >= target_word_count:
+			break
+	
+	output_string = "\n".join(output_elements)
+
+	output_file_name = 'swedish.txt'
 	with open(output_file_name, "w") as text_file:
 		print(f"{output_string}", file=text_file)
 
 	print("\n🇸🇪 Outputted #{} words to file '{}'".format(len(output_elements), output_file_name))
-
+	return output_elements
 
 def created_pos_tagged_doc_parole():
 	file_name = 'stats_PAROLE.txt'
-
-	words = Words(target_word_count=2500)
+	target = 2048
+	words = Words(target_word_count=target*3)
 
 	with open(file_name, 'r') as filehandle:
 		for current_place in filehandle.readlines():
@@ -254,6 +342,8 @@ def created_pos_tagged_doc_parole():
 			if words.done():
 				break
 
-	parse_result(words)
+	candidates = parse_result(words)
+	ask_for_human_input_for_final_list(target_word_count=target, candidates=candidates)
+
 	
 created_pos_tagged_doc_parole()
