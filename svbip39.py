@@ -1,5 +1,18 @@
 from wordfreq import top_n_list
 
+def created_pos_tagged_doc_parole():
+	# define empty list
+	words = []
+
+	# open file and read the content in a list
+	with open(file_name, 'r') as filehandle:
+	    words = [current_place.rstrip() for current_place in filehandle.readlines()]
+
+	print("✅ Read #{} words from '{}'".format(len(words), file_name))
+
+	return set(words)
+
+
 def read_languages_file(file_name):
 	# define empty list
 	words = []
